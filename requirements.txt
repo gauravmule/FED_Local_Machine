@@ -1,0 +1,11 @@
+tensorflow==2.13.0 
+numpy==1.24.3 
+fer 
+opencv-python 
+matplotlib==3.7.5 
+flask 
+flask-caching 
+flask-compress 
+flask-bcrypt 
+pymysql 
+cryptography 

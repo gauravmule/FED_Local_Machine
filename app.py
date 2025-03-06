@@ -14,6 +14,8 @@ from pymysql.cursors import DictCursor
 import matplotlib.pyplot as plt
 import io
 import base64
+import cv2
+import numpy as np
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key_12345"
@@ -50,6 +52,35 @@ def start_session():
     if 'user_id' not in session:
         return jsonify({"success": False, "message": "Not logged in"}), 401
     if detector.start_session():
+        return jsonify({"success": True})
+    return jsonify({"success": False, "message": "Failed to start session"}), 500
+
+@app.route("/stop_session", methods=["POST"])
+def stop_session():
+    if 'user_id' not in session:
+        return jsonify({"success": False, "message": "Not logged in"}), 401
+    detector.stop_session()
+    return jsonify({"success": True})
+
+@app.route("/predict_emotion", methods=["POST"])
+def predict_emotion():
+    if 'user_id' not in session:
+        return jsonify({"success": False, "message": "Not logged in"}), 401
+    
+    data = request.json["image"]
+    encoded_data = data.split(",")[1]
+    image_bytes = base64.b64decode(encoded_data)
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    
+    summary = detector.process_client_frame(frame)
+    return jsonify(summary)
+
+@app.route("/start_session", methods=["POST"])
+def start_session():
+    if 'user_id' not in session:
+        return jsonify({"success": False, "message": "Not logged in"}), 401
+    if detector.start_session():  # Still logs session, but no webcam capture
         return jsonify({"success": True})
     return jsonify({"success": False, "message": "Failed to start session"}), 500
 

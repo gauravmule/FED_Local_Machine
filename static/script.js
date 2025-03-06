@@ -4,21 +4,37 @@ document.addEventListener("DOMContentLoaded", function () {
     const videoStream = document.getElementById("video-stream");
     const summaryContent = document.getElementById("summary-content");
     let updateInterval;
+    let stream;
+    let canvas = document.createElement("canvas"); // Hidden canvas for WebRTC
+    canvas.width = 900;
+    canvas.height = 400;
 
-    async function initializeCamera() {
+    async function initializeServerCamera() {
         try {
             videoStream.src = "/video_feed?t=" + Date.now();
             await new Promise((resolve) => {
                 videoStream.onload = resolve;
                 videoStream.onerror = () => {
-                    throw new Error("Webcam not accessible. Please check your camera settings.");
+                    throw new Error("Server webcam not accessible.");
                 };
                 setTimeout(resolve, 1000);
             });
             return true;
         } catch (error) {
-            console.error("Camera initialization failed:", error);
+            console.error("Server camera failed:", error);
             alert(error.message);
+            return false;
+        }
+    }
+
+    async function startWebcam() {
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoStream.srcObject = stream; // Use client webcam
+            return true;
+        } catch (error) {
+            console.error("Client webcam failed:", error);
+            alert("Error: Could not access client webcam.");
             return false;
         }
     }
@@ -34,20 +50,47 @@ document.addEventListener("DOMContentLoaded", function () {
             const data = await response.json();
 
             if (data.success) {
-                if (await initializeCamera()) {
-                    stopBtn.disabled = false;
-                    updateInterval = setInterval(async () => {
-                        try {
-                            const summaryResponse = await fetch("/get_emotion_summary");
-                            if (!summaryResponse.ok) throw new Error("Failed to fetch summary");
-                            const summary = await summaryResponse.json();
-                            updateSummaryDisplay(summary);
-                        } catch (error) {
-                            console.error("Summary update failed:", error);
-                        }
-                    }, 1500);
+                const useClientWebcam = confirm("Use client webcam? (Yes for client, No for server)");
+                if (useClientWebcam) {
+                    if (await startWebcam()) {
+                        stopBtn.disabled = false;
+                        updateInterval = setInterval(async () => {
+                            try {
+                                const ctx = canvas.getContext("2d");
+                                ctx.drawImage(videoStream, 0, 0, canvas.width, canvas.height);
+                                const imageData = canvas.toDataURL("image/jpeg");
+
+                                const predictResponse = await fetch("/predict_emotion", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ image: imageData }),
+                                });
+                                if (!predictResponse.ok) throw new Error("Failed to predict");
+                                const summary = await predictResponse.json();
+                                updateSummaryDisplay(summary);
+                            } catch (error) {
+                                console.error("Emotion detection failed:", error);
+                            }
+                        }, 1500);
+                    } else {
+                        throw new Error("Client webcam failed");
+                    }
                 } else {
-                    throw new Error("Camera initialization failed");
+                    if (await initializeServerCamera()) {
+                        stopBtn.disabled = false;
+                        updateInterval = setInterval(async () => {
+                            try {
+                                const summaryResponse = await fetch("/get_emotion_summary");
+                                if (!summaryResponse.ok) throw new Error("Failed to fetch summary");
+                                const summary = await summaryResponse.json();
+                                updateSummaryDisplay(summary);
+                            } catch (error) {
+                                console.error("Summary update failed:", error);
+                            }
+                        }, 1500);
+                    } else {
+                        throw new Error("Server camera failed");
+                    }
                 }
             } else {
                 throw new Error(data.message || "Failed to start session");
@@ -62,7 +105,12 @@ document.addEventListener("DOMContentLoaded", function () {
     stopBtn.addEventListener("click", async function () {
         try {
             clearInterval(updateInterval);
-            videoStream.src = "";
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                videoStream.srcObject = null;
+            } else {
+                videoStream.src = "";
+            }
             startBtn.disabled = false;
             stopBtn.disabled = true;
             summaryContent.innerHTML = "<p>No active session</p>";
