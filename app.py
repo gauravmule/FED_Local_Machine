@@ -48,7 +48,7 @@ def get_emotion_summary():
     return jsonify(detector.emotion_summary)
 
 @app.route("/start_session", methods=["POST"])
-def start_session():
+def start_session_endpoint():
     if 'user_id' not in session:
         return jsonify({"success": False, "message": "Not logged in"}), 401
     if detector.start_session():
@@ -75,21 +75,6 @@ def predict_emotion():
     
     summary = detector.process_client_frame(frame)
     return jsonify(summary)
-
-@app.route("/start_session", methods=["POST"])
-def start_session():
-    if 'user_id' not in session:
-        return jsonify({"success": False, "message": "Not logged in"}), 401
-    if detector.start_session():  # Still logs session, but no webcam capture
-        return jsonify({"success": True})
-    return jsonify({"success": False, "message": "Failed to start session"}), 500
-
-@app.route("/stop_session", methods=["POST"])
-def stop_session():
-    if 'user_id' not in session:
-        return jsonify({"success": False, "message": "Not logged in"}), 401
-    detector.stop_session()
-    return jsonify({"success": True})
 
 @app.route("/dashboard")
 def dashboard():
@@ -134,7 +119,6 @@ def dashboard():
         finally:
             conn.close()
 
-    # Generate bar chart
     plt.figure(figsize=(8, 5))
     plt.bar(emotions, counts, color=['#FF6384', '#FF9F40', '#FFCD56', '#4BC0C0', '#36A2EB', '#9966FF', '#C9CBCF'], edgecolor='black')
     plt.title(f'Emotion Distribution {"(Session #" + selected_session + ")" if selected_session else "(All Sessions)"}', fontsize=14, pad=10)
@@ -152,8 +136,7 @@ def dashboard():
     bar_img.seek(0)
     bar_chart_data = base64.b64encode(bar_img.getvalue()).decode('utf-8')
 
-    # Generate pie chart only if there’s data
-    if sum(counts) > 0:  # Check if counts has non-zero values
+    if sum(counts) > 0:
         plt.figure(figsize=(5, 5))
         plt.pie(counts, labels=emotions, colors=['#FF6384', '#FF9F40', '#FFCD56', '#4BC0C0', '#36A2EB', '#9966FF', '#C9CBCF'], autopct='%1.1f%%', startangle=90, textprops={'fontsize': 10})
         plt.title('Emotion Proportions', fontsize=14, pad=10)
@@ -164,8 +147,7 @@ def dashboard():
         pie_img.seek(0)
         pie_chart_data = base64.b64encode(pie_img.getvalue()).decode('utf-8')
     else:
-        # Placeholder for no data
-        pie_chart_data = None  # Pass None if no data; handle in template
+        pie_chart_data = None
 
     return render_template("dashboard.html", bar_chart_data=bar_chart_data, pie_chart_data=pie_chart_data, sessions=sessions, selected_session=selected_session, stats=stats)
 

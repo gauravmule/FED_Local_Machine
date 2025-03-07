@@ -5,9 +5,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const summaryContent = document.getElementById("summary-content");
     let updateInterval;
     let stream;
-    let canvas = document.createElement("canvas"); // Hidden canvas for WebRTC
-    canvas.width = 900;
-    canvas.height = 400;
+    let canvas = document.createElement("canvas");
+    canvas.width = 640;  // Reduced resolution
+    canvas.height = 480;
 
     async function initializeServerCamera() {
         try {
@@ -29,8 +29,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     async function startWebcam() {
         try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            videoStream.srcObject = stream; // Use client webcam
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, frameRate: 15 }  // Optimized constraints
+            });
+            videoStream.srcObject = stream;
             return true;
         } catch (error) {
             console.error("Client webcam failed:", error);
@@ -58,7 +60,7 @@ document.addEventListener("DOMContentLoaded", function () {
                             try {
                                 const ctx = canvas.getContext("2d");
                                 ctx.drawImage(videoStream, 0, 0, canvas.width, canvas.height);
-                                const imageData = canvas.toDataURL("image/jpeg");
+                                const imageData = canvas.toDataURL("image/jpeg", 0.85);  // Higher quality
 
                                 const predictResponse = await fetch("/predict_emotion", {
                                     method: "POST",
@@ -71,7 +73,7 @@ document.addEventListener("DOMContentLoaded", function () {
                             } catch (error) {
                                 console.error("Emotion detection failed:", error);
                             }
-                        }, 1500);
+                        }, 2000);  // Slower update rate
                     } else {
                         throw new Error("Client webcam failed");
                     }
@@ -87,7 +89,7 @@ document.addEventListener("DOMContentLoaded", function () {
                             } catch (error) {
                                 console.error("Summary update failed:", error);
                             }
-                        }, 1500);
+                        }, 2000);
                     } else {
                         throw new Error("Server camera failed");
                     }

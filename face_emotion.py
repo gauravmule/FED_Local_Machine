@@ -20,24 +20,25 @@ class EmotionDetector:
         self.face_tracker = {}
         self.frame_queue = queue.Queue(maxsize=3)
         self.processed_frame = None
-        self.tracking_threshold = 75
-        self.emotion_analysis_interval = 1
+        self.tracking_threshold = 50  # Reduced for better tracking
         self.frame_counter = 0
         self.session_id = None
         self.face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
-        self.emotion_detector = FER(mtcnn=False)
+        self.emotion_detector = FER(mtcnn=True)  # Use MTCNN for better accuracy
 
     def _analyze_emotion(self, face_roi):
         try:
-            result = self.emotion_detector.detect_emotions(face_roi)
+            # Preprocess: Convert to RGB, enhance contrast
+            face_roi_rgb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB)
+            face_roi_rgb = cv2.convertScaleAbs(face_roi_rgb, alpha=1.2, beta=10)
+            result = self.emotion_detector.detect_emotions(face_roi_rgb)
             if result and len(result) > 0:
                 emotions = result[0]['emotions']
                 dominant_emotion = max(emotions, key=emotions.get)
                 logger.info(f"Emotions detected: {emotions}")
                 return dominant_emotion
-            logger.info("No emotions detected in frame")
             return "neutral"
         except Exception as e:
             logger.error(f"Emotion analysis error: {e}")
@@ -55,7 +56,7 @@ class EmotionDetector:
             
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.cap.set(cv2.CAP_PROP_FPS, 24)
+            self.cap.set(cv2.CAP_PROP_FPS, 15)  # Lower FPS to reduce lag
             self.is_running = True
 
             conn = get_db_connection()
@@ -80,7 +81,6 @@ class EmotionDetector:
                 finally:
                     conn.close()
             else:
-                logger.error("No database connection for session start")
                 self.is_running = False
                 return False
 
@@ -158,7 +158,7 @@ class EmotionDetector:
                 ret, frame = self.cap.read()
                 if ret and not self.frame_queue.full():
                     self.frame_queue.put(cv2.resize(frame, (320, 240)))
-                time.sleep(0.01)
+                time.sleep(0.05)  # Reduced frequency
             except Exception as e:
                 logger.error(f"Capture frame error: {e}")
                 break
@@ -167,14 +167,14 @@ class EmotionDetector:
         while self.is_running:
             try:
                 if self.frame_queue.empty():
-                    time.sleep(0.01)
+                    time.sleep(0.05)
                     continue
 
                 small_frame = self.frame_queue.get()
                 self.frame_counter += 1
                 
                 gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-                faces = self.face_cascade.detectMultiScale(gray, 1.05, 3, minSize=(30, 30))
+                faces = self.face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))  # Adjusted for accuracy
                 
                 frame = cv2.resize(small_frame, (640, 480))
                 current_emotions = []
@@ -183,7 +183,6 @@ class EmotionDetector:
                 for (x, y, w, h) in faces:
                     x *= 2; y *= 2; w *= 2; h *= 2
                     face_roi = frame[y:y+h, x:x+w]
-                    
                     emotion = self._analyze_emotion(face_roi)
                     
                     centroid = (x + w//2, y + h//2)
@@ -220,11 +219,51 @@ class EmotionDetector:
         while self.is_running:
             try:
                 if self.processed_frame is not None:
-                    ret, buffer = cv2.imencode('.jpg', self.processed_frame)
+                    ret, buffer = cv2.imencode('.jpg', self.processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])  # Higher quality
                     frame_data = (b'--frame\r\n'
                                  b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
                     yield frame_data
-                time.sleep(0.01)
+                time.sleep(0.05)
             except Exception as e:
                 logger.error(f"Generate frames error: {e}")
                 break
+
+    def process_client_frame(self, frame):
+        try:
+            small_frame = cv2.resize(frame, (320, 240))
+            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+            faces = self.face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+            
+            frame_resized = cv2.resize(small_frame, (640, 480))
+            current_emotions = []
+            new_tracker = {}
+
+            for (x, y, w, h) in faces:
+                x *= 2; y *= 2; w *= 2; h *= 2
+                face_roi = frame_resized[y:y+h, x:x+w]
+                emotion = self._analyze_emotion(face_roi)
+                
+                centroid = (x + w//2, y + h//2)
+                closest_id = None
+                min_dist = float('inf')
+                
+                for fid, (old_cent, _, _) in self.face_tracker.items():
+                    dist = ((centroid[0]-old_cent[0])**2 + (centroid[1]-old_cent[1])**2)**0.5
+                    if dist < min_dist and dist < self.tracking_threshold:
+                        min_dist = dist
+                        closest_id = fid
+                
+                fid = closest_id if closest_id else len(self.face_tracker)
+                new_tracker[fid] = (centroid, emotion, (x, y, w, h))
+                current_emotions.append(emotion)
+
+            self.face_tracker = new_tracker
+            emotion_counts = {e: current_emotions.count(e) for e in set(current_emotions)}
+            self.emotion_summary = {
+                "total_faces": len(faces),
+                "emotions": emotion_counts if emotion_counts else {"neutral": 0}
+            }
+            return self.emotion_summary
+        except Exception as e:
+            logger.error(f"Client frame processing error: {e}")
+            return {"total_faces": 0, "emotions": {"neutral": 0}}
